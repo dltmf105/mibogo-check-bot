@@ -168,10 +168,9 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
             current = team
             result.append(f"\n{team}구역")
 
-        result.append(person)
-
-       await 
-    update.message.reply_text("\n".join(result))
+        result.append(person)    
+    await 
+update.message.reply_text("\n".join(result))
 
     if __name__ == "__main__":
     if not TOKEN:
