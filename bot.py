@@ -152,14 +152,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "보고 내용을 그대로 붙여넣어 주세요.\n\n미보고자를 계산해드립니다."
     )
+    async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ALLOWED_USER_ID:
+        return
+
+    context.user_data["reported"] = set()
+
+    await update.message.reply_text(
+        "✅ 누적 보고 기록을 초기화했습니다.\n"
+        "새로운 보고를 붙여넣어 주세요."
+    )
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ALLOWED_USER_ID:
         return
 
     text = update.message.text or ""
 
-    reported = set(pattern.findall(text))
-    missing = sorted(MEMBERS - reported)
+    new_reported = set(pattern.findall(text))
+valid_reported = new_reported & MEMBERS
+
+accumulated_reported = context.user_data.setdefault("reported", set())
+accumulated_reported.update(valid_reported)
+
+missing = sorted(MEMBERS - accumulated_reported)
 
     if not missing:
         await update.message.reply_text("🎉 전원 보고 완료!")
@@ -185,6 +200,9 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+
+
+    app.add_handler(CommandHandler("reset", reset))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, check)
     )
