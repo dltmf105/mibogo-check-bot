@@ -166,13 +166,13 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for person in missing:
         _, team, name = person.split("/")
 
-           if current != team:
-            current = team
-            result.append(f"\n■ 선봉/{team}")
+     if current != team:
+         current = team
+         result.append(f"\n■ 선봉/{team}")
 
-        result.append(f"- {name}")             
+     result.append(f"- {name}")             
 
-    await 
+      await 
     update.message.reply_text("\n".join(result))
 
 
