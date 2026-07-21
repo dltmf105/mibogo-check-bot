@@ -29,7 +29,10 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def run_health_server():
     port = int(os.environ.get("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server = HTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
     server.serve_forever()
 
 
@@ -191,37 +194,42 @@ async def check(
 
     text = update.message.text or ""
 
-    # 이번 메시지에서 보고된 사람
-    new_reported = set(pattern.findall(text))
+    # 이번 메시지에서 보고된 사람 추출
+    new_reported = set(
+        pattern.findall(text)
+    )
 
     # 전체 명단에 실제로 있는 사람만 인정
     valid_reported = new_reported & MEMBERS
 
-    # 이전까지 누적된 보고자 불러오기
-    accumulated_reported = context.user_data.setdefault(
-        "reported",
-        set()
+    # 기존 누적 보고 기록 불러오기
+    accumulated_reported = (
+        context.user_data.setdefault(
+            "reported",
+            set()
+        )
     )
 
     # 이번 보고자를 누적 기록에 추가
-    accumulated_reported.update(valid_reported)
+    accumulated_reported.update(
+        valid_reported
+    )
 
     # 전체 명단에서 누적 보고자를 제외
-    missing = sorted(MEMBERS - accumulated_reported)
+    missing = sorted(
+        MEMBERS - accumulated_reported
+    )
 
+    # 전원이 보고했을 경우
     if not missing:
         await update.message.reply_text(
-            "🎉 전원 보고 완료!\n\n"
-            f"이번 보고: {len(valid_reported)}명\n"
-            f"누적 보고: {len(accumulated_reported)}명"
+            "🎉 전원 보고 완료!"
         )
         return
 
+    # 미보고 명단만 표시
     result = [
-        "[미보고명단]",
-        f"이번 보고: {len(valid_reported)}명",
-        f"누적 보고: {len(accumulated_reported)}명",
-        f"미보고: {len(missing)}명",
+        "[미보고명단]"
     ]
 
     current_team = ""
@@ -231,7 +239,9 @@ async def check(
 
         if current_team != team:
             current_team = team
-            result.append(f"\n{team}구역")
+            result.append(
+                f"\n{team}구역"
+            )
 
         result.append(person)
 
@@ -246,19 +256,30 @@ if __name__ == "__main__":
             "BOT_TOKEN 환경변수가 설정되지 않았습니다."
         )
 
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(
-        CommandHandler("start", start)
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .build()
     )
 
     app.add_handler(
-        CommandHandler("reset", reset)
+        CommandHandler(
+            "start",
+            start
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "reset",
+            reset
+        )
     )
 
     app.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
+            filters.TEXT
+            & ~filters.COMMAND,
             check
         )
     )
