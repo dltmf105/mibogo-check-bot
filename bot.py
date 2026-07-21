@@ -2,6 +2,7 @@ import os
 import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
+
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -11,8 +12,11 @@ from telegram.ext import (
     filters,
 )
 
+
 TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_USER_ID = 498546317
+
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -28,7 +32,8 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     server.serve_forever()
 
-MEMBERS = {    
+
+MEMBERS = {
     "선봉/1/김수연3",
     "선봉/1/기형진",
     "선봉/1/김애림",
@@ -56,7 +61,7 @@ MEMBERS = {
     "선봉/1/최지나",
     "선봉/1/하세린",
     "선봉/1/한수연2",
-  
+
     "선봉/2/남완전",
     "선봉/2/김이슬",
     "선봉/2/박효범",
@@ -83,8 +88,8 @@ MEMBERS = {
     "선봉/2/정주호",
     "선봉/2/최건우",
     "선봉/2/한슬비",
-  
-     "선봉/3/나다은",
+
+    "선봉/3/나다은",
     "선봉/3/김연지",
     "선봉/3/이덕희",
     "선봉/3/박민혁",
@@ -111,7 +116,7 @@ MEMBERS = {
     "선봉/3/최세란",
     "선봉/3/황소윤",
     "선봉/3/유하은",
-  
+
     "선봉/4/문성준",
     "선봉/4/조의연",
     "선봉/4/문소원",
@@ -143,6 +148,8 @@ MEMBERS = {
     "선봉/4/한대준",
     "선봉/4/홍지석",
 }
+
+
 pattern = re.compile(r"선봉/\d+/[^\s/]+")
 
 
@@ -190,13 +197,13 @@ async def check(
     # 전체 명단에 실제로 있는 사람만 인정
     valid_reported = new_reported & MEMBERS
 
-    # 이전까지 보고된 사람 불러오기
+    # 이전까지 누적된 보고자 불러오기
     accumulated_reported = context.user_data.setdefault(
         "reported",
         set()
     )
 
-    # 이번 보고자를 기존 기록에 추가
+    # 이번 보고자를 누적 기록에 추가
     accumulated_reported.update(valid_reported)
 
     # 전체 명단에서 누적 보고자를 제외
@@ -205,7 +212,8 @@ async def check(
     if not missing:
         await update.message.reply_text(
             "🎉 전원 보고 완료!\n\n"
-            f"누적 보고 인원: {len(accumulated_reported)}명"
+            f"이번 보고: {len(valid_reported)}명\n"
+            f"누적 보고: {len(accumulated_reported)}명"
         )
         return
 
@@ -216,18 +224,20 @@ async def check(
         f"미보고: {len(missing)}명",
     ]
 
-    current = ""
+    current_team = ""
 
     for person in missing:
         _, team, name = person.split("/")
 
-        if current != team:
-            current = team
+        if current_team != team:
+            current_team = team
             result.append(f"\n{team}구역")
 
         result.append(person)
 
-    await update.message.reply_text("\n".join(result))
+    await update.message.reply_text(
+        "\n".join(result)
+    )
 
 
 if __name__ == "__main__":
@@ -260,4 +270,6 @@ if __name__ == "__main__":
 
     print("미보고 확인봇 실행 중...")
 
-    app.run_polling()
+    app.run_polling(
+        drop_pending_updates=True
+    )
