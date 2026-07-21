@@ -158,20 +158,18 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not missing:
         await update.message.reply_text("🎉 전원 보고 완료!")
         return
+        
+result = ["[미보고명단]"]
+current = ""
 
-    result = ["[미보고명단]"]
+for person in missing:
+    _, team, name = person.split("/")
 
-for team in ["1", "2", "3", "4"]:
-    team_members = [
-        person for person in missing
-        if person.split("/")[1] == team
-    ]
-
-    if team_members:
+    if current != team:
+        current = team
         result.append(f"\n{team}구역")
 
-        for person in team_members:
-            result.append(person)
+    result.append(person)
 
 await update.message.reply_text("\n".join(result))
 
