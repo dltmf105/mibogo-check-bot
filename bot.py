@@ -145,14 +145,25 @@ MEMBERS = {
 }
 pattern = re.compile(r"선봉/\d+/[^\s/]+")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if update.effective_user.id != ALLOWED_USER_ID:
         return
 
     await update.message.reply_text(
-        "보고 내용을 그대로 붙여넣어 주세요.\n\n미보고자를 계산해드립니다."
+        "보고 내용을 그대로 붙여넣어 주세요.\n\n"
+        "여러 번 나누어 보내도 보고자가 계속 누적됩니다.\n"
+        "새로운 보고를 시작할 때는 /reset 을 보내주세요."
     )
-    async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+
+async def reset(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if update.effective_user.id != ALLOWED_USER_ID:
         return
 
@@ -162,25 +173,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ 누적 보고 기록을 초기화했습니다.\n"
         "새로운 보고를 붙여넣어 주세요."
     )
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+
+async def check(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if update.effective_user.id != ALLOWED_USER_ID:
         return
 
     text = update.message.text or ""
 
+    # 이번 메시지에서 보고된 사람
     new_reported = set(pattern.findall(text))
-valid_reported = new_reported & MEMBERS
 
-accumulated_reported = context.user_data.setdefault("reported", set())
-accumulated_reported.update(valid_reported)
+    # 전체 명단에 실제로 있는 사람만 인정
+    valid_reported = new_reported & MEMBERS
 
-missing = sorted(MEMBERS - accumulated_reported)
+    # 이전까지 보고된 사람 불러오기
+    accumulated_reported = context.user_data.setdefault(
+        "reported",
+        set()
+    )
+
+    # 이번 보고자를 기존 기록에 추가
+    accumulated_reported.update(valid_reported)
+
+    # 전체 명단에서 누적 보고자를 제외
+    missing = sorted(MEMBERS - accumulated_reported)
 
     if not missing:
-        await update.message.reply_text("🎉 전원 보고 완료!")
+        await update.message.reply_text(
+            "🎉 전원 보고 완료!\n\n"
+            f"누적 보고 인원: {len(accumulated_reported)}명"
+        )
         return
 
-    result = ["[미보고명단]"]
+    result = [
+        "[미보고명단]",
+        f"이번 보고: {len(valid_reported)}명",
+        f"누적 보고: {len(accumulated_reported)}명",
+        f"미보고: {len(missing)}명",
+    ]
+
     current = ""
 
     for person in missing:
@@ -189,27 +224,40 @@ missing = sorted(MEMBERS - accumulated_reported)
         if current != team:
             current = team
             result.append(f"\n{team}구역")
+
         result.append(person)
 
     await update.message.reply_text("\n".join(result))
 
+
 if __name__ == "__main__":
     if not TOKEN:
-        raise RuntimeError("BOT_TOKEN 환경변수가 설정되지 않았습니다.")
+        raise RuntimeError(
+            "BOT_TOKEN 환경변수가 설정되지 않았습니다."
+        )
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-
-
-    app.add_handler(CommandHandler("reset", reset))
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, check)
+        CommandHandler("start", start)
     )
 
-    Thread(target=run_health_server, daemon=True).start()
+    app.add_handler(
+        CommandHandler("reset", reset)
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            check
+        )
+    )
+
+    Thread(
+        target=run_health_server,
+        daemon=True
+    ).start()
 
     print("미보고 확인봇 실행 중...")
 
     app.run_polling()
-    
