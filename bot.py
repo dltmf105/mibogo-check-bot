@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
+ALLOWED_USER_ID = 498546317
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -145,10 +146,15 @@ MEMBERS = {
 pattern = re.compile(r"선봉/\d+/[^\s/]+")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != ALLOWED_USER_ID:
+        return
     await update.message.reply_text(
         "보고 내용을 그대로 붙여넣어 주세요.\n\n미보고자를 계산해드립니다."
     )
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != ALLOWED_USER_ID:
+        return
+    
     text = update.message.text or ""
 
     reported = set(pattern.findall(text))
