@@ -166,13 +166,15 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for person in missing:
         _, team, name = person.split("/")
 
-        if current != team:
+           if current != team:
             current = team
             result.append(f"\n■ 선봉/{team}")
 
-        result.append(f"- {name}")
+        result.append(f"- {name}")             
 
-        await update.message.reply_text("\n".join(result))
+    await 
+    update.message.reply_text("\n".join(result))
+
 
 if __name__ == "__main__":
     if not TOKEN:
@@ -184,8 +186,9 @@ if __name__ == "__main__":
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, check)
     )
-Thread(target=run_health_server, daemon=True).start()
-  
-print("미보고 확인봇 실행 중...")
+
+    Thread(target=run_health_server, daemon=True).start()
+
+    print("미보고 확인봇 실행 중...")
 
     app.run_polling()
