@@ -159,20 +159,21 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🎉 전원 보고 완료!")
         return
 
-    result = ["📋 미보고자\n"]
+    result = ["[미보고명단]"]
 
-    current = ""
+for team in ["1", "2", "3", "4"]:
+    team_members = [
+        person for person in missing
+        if person.split("/")[1] == team
+    ]
 
-    for person in missing:
-        _, team, name = person.split("/")
-        
-        if current != team:
-            current = team
-            result.append(f"\n■ 선봉/{team}")
+    if team_members:
+        result.append(f"\n{team}구역")
 
-        result.append(f"- {name}")
+        for person in team_members:
+            result.append(person)
 
-    await update.message.reply_text("\n".join(result))
+await update.message.reply_text("\n".join(result))
 
 if __name__ == "__main__":
     if not TOKEN:
