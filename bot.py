@@ -167,12 +167,11 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if current != team:
             current = team
             result.append(f"\n{team}구역")
+        result.append(person)
 
-        result.append(person)    
-    await 
-update.message.reply_text("\n".join(result))
+    await update.message.reply_text("\n".join(result))
 
-    if __name__ == "__main__":
+if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN 환경변수가 설정되지 않았습니다.")
 
