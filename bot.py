@@ -169,9 +169,10 @@ for person in missing:
         current = team
         result.append(f"\n{team}구역")
 
-    result.append(person)
+     result.append(person)
 
-await update.message.reply_text("\n".join(result))
+   await 
+update.message.reply_text("\n".join(result))
 
 if __name__ == "__main__":
     if not TOKEN:
