@@ -1,5 +1,7 @@
 import os
 import re
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -10,6 +12,20 @@ from telegram.ext import (
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+    def log_message(self, format, *args):
+        return
+
+
+def run_health_server():
+    port = int(os.environ.get("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
 
 MEMBERS = {    
     "선봉/1/김수연3",
@@ -168,7 +184,8 @@ if __name__ == "__main__":
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, check)
     )
-
-    print("미보고 확인봇 실행 중...")
+Thread(target=run_health_server, daemon=True).start()
+  
+print("미보고 확인봇 실행 중...")
 
     app.run_polling()
