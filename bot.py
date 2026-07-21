@@ -148,9 +148,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "보고 내용을 그대로 붙여넣어 주세요.\n\n미보고자를 계산해드립니다."
     )
-
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    text = update.message.text or ""
 
     reported = set(pattern.findall(text))
     missing = sorted(MEMBERS - reported)
@@ -158,23 +157,23 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not missing:
         await update.message.reply_text("🎉 전원 보고 완료!")
         return
-        
-result = ["[미보고명단]"]
-current = ""
 
-for person in missing:
-    _, team, name = person.split("/")
+    result = ["[미보고명단]"]
+    current = ""
 
-    if current != team:
-        current = team
-        result.append(f"\n{team}구역")
+    for person in missing:
+        _, team, name = person.split("/")
 
-     result.append(person)
+        if current != team:
+            current = team
+            result.append(f"\n{team}구역")
 
-   await 
-update.message.reply_text("\n".join(result))
+        result.append(person)
 
-if __name__ == "__main__":
+       await 
+    update.message.reply_text("\n".join(result))
+
+    if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN 환경변수가 설정되지 않았습니다.")
 
@@ -190,3 +189,4 @@ if __name__ == "__main__":
     print("미보고 확인봇 실행 중...")
 
     app.run_polling()
+    
