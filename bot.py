@@ -1,41 +1,63 @@
 import os
 import re
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
+import logging
 
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
+    CommandHandler,
     ContextTypes,
     MessageHandler,
-    CommandHandler,
     filters,
 )
 
 
+# Render 환경변수
 TOKEN = os.getenv("BOT_TOKEN")
-ALLOWED_USER_ID = 498546317
+WEBHOOK_URL = os.getenv(
+    "WEBHOOK_URL",
+    "https://mibogo-check-bot.onrender.com"
+)
 
+ALLOWED_USER_ID_TEXT = os.getenv(
+    "ALLOWED_USER_ID",
+    "498546317"
+)
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-    def log_message(self, format, *args):
-        return
-
-
-def run_health_server():
-    port = int(os.environ.get("PORT", "10000"))
-    server = HTTPServer(
-        ("0.0.0.0", port),
-        HealthHandler
+PORT = int(
+    os.getenv(
+        "PORT",
+        "10000"
     )
-    server.serve_forever()
+)
 
 
+# 로그 설정
+logging.basicConfig(
+    format=(
+        "%(asctime)s - "
+        "%(name)s - "
+        "%(levelname)s - "
+        "%(message)s"
+    ),
+    level=logging.INFO,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# 허용 사용자 ID
+try:
+    ALLOWED_USER_ID = int(
+        ALLOWED_USER_ID_TEXT
+    )
+except ValueError as error:
+    raise RuntimeError(
+        "ALLOWED_USER_ID는 숫자여야 합니다."
+    ) from error
+
+
+# 전체 명단
 MEMBERS = {
     "선봉/1/김수연3",
     "선봉/1/기형진",
@@ -153,14 +175,36 @@ MEMBERS = {
 }
 
 
-pattern = re.compile(r"선봉/\d+/[^\s/]+")
+# 보고 문구 추출 정규식
+PATTERN = re.compile(
+    r"선봉/\d+/[^\s/]+"
+)
+
+
+def is_allowed(
+    update: Update
+) -> bool:
+    """허용된 사용자만 봇을 사용하게 합니다."""
+
+    if update.effective_user is None:
+        return False
+
+    return (
+        update.effective_user.id
+        == ALLOWED_USER_ID
+    )
 
 
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    if update.effective_user.id != ALLOWED_USER_ID:
+    """봇 시작 안내."""
+
+    if not is_allowed(update):
+        return
+
+    if update.message is None:
         return
 
     await update.message.reply_text(
@@ -174,7 +218,12 @@ async def reset(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    if update.effective_user.id != ALLOWED_USER_ID:
+    """누적 보고 기록 초기화."""
+
+    if not is_allowed(update):
+        return
+
+    if update.message is None:
         return
 
     context.user_data["reported"] = set()
@@ -189,20 +238,28 @@ async def check(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    if update.effective_user.id != ALLOWED_USER_ID:
+    """보고 내용을 확인하고 미보고 명단을 출력합니다."""
+
+    if not is_allowed(update):
+        return
+
+    if update.message is None:
         return
 
     text = update.message.text or ""
 
     # 이번 메시지에서 보고된 사람 추출
     new_reported = set(
-        pattern.findall(text)
+        PATTERN.findall(text)
     )
 
     # 전체 명단에 실제로 있는 사람만 인정
-    valid_reported = new_reported & MEMBERS
+    valid_reported = (
+        new_reported
+        & MEMBERS
+    )
 
-    # 기존 누적 보고 기록 불러오기
+    # 누적 보고 기록
     accumulated_reported = (
         context.user_data.setdefault(
             "reported",
@@ -215,27 +272,37 @@ async def check(
         valid_reported
     )
 
-    # 전체 명단에서 누적 보고자를 제외
+    # 미보고자 계산
     missing = sorted(
-        MEMBERS - accumulated_reported
+        MEMBERS
+        - accumulated_reported,
+        key=lambda item: (
+            int(
+                item.split("/")[1]
+            ),
+            item.split("/")[2],
+        ),
     )
 
-    # 전원이 보고했을 경우
+    # 전원 보고 완료
     if not missing:
         await update.message.reply_text(
             "🎉 전원 보고 완료!"
         )
         return
 
-    # 미보고 명단만 표시
+    # 미보고 명단 작성
     result = [
         "[미보고명단]"
     ]
 
-    current_team = ""
+    current_team = None
 
     for person in missing:
-        _, team, name = person.split("/")
+        _, team, _ = person.split(
+            "/",
+            2
+        )
 
         if current_team != team:
             current_team = team
@@ -250,11 +317,39 @@ async def check(
     )
 
 
-if __name__ == "__main__":
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """오류를 Render 로그에 출력합니다."""
+
+    logger.exception(
+        "텔레그램 업데이트 처리 중 오류 발생",
+        exc_info=context.error,
+    )
+
+
+def main():
+    """웹훅 방식으로 봇을 실행합니다."""
+
     if not TOKEN:
         raise RuntimeError(
             "BOT_TOKEN 환경변수가 설정되지 않았습니다."
         )
+
+    if not WEBHOOK_URL:
+        raise RuntimeError(
+            "WEBHOOK_URL 환경변수가 설정되지 않았습니다."
+        )
+
+    # 주소 끝의 / 제거
+    base_url = WEBHOOK_URL.rstrip("/")
+
+    webhook_path = "telegram"
+
+    full_webhook_url = (
+        f"{base_url}/{webhook_path}"
+    )
 
     app = (
         ApplicationBuilder()
@@ -284,13 +379,38 @@ if __name__ == "__main__":
         )
     )
 
-    Thread(
-        target=run_health_server,
-        daemon=True
-    ).start()
-
-    print("미보고 확인봇 실행 중...")
-
-    app.run_polling(
-        drop_pending_updates=True
+    app.add_error_handler(
+        error_handler
     )
+
+    logger.info(
+        "미보고 확인봇 웹훅 실행 시작"
+    )
+
+    logger.info(
+        "Webhook URL: %s",
+        full_webhook_url
+    )
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=webhook_path,
+        webhook_url=full_webhook_url,
+
+        # Render에서는 외부 HTTPS를 사용하지만
+        # 내부 서버는 HTTP로 실행합니다.
+        cert=None,
+        key=None,
+
+        # 배포 전에 쌓인 오래된 메시지를 제거합니다.
+        drop_pending_updates=True,
+
+        # 정상 종료 신호를 처리합니다.
+        close_loop=True,
+        stop_signals=None,
+    )
+
+
+if __name__ == "__main__":
+    main()
