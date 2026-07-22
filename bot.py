@@ -1,6 +1,6 @@
+import logging
 import os
 import re
-import logging
 
 from telegram import Update
 from telegram.ext import (
@@ -12,27 +12,34 @@ from telegram.ext import (
 )
 
 
+# =========================================================
 # Render 환경변수
-TOKEN = os.getenv("BOT_TOKEN")
+# =========================================================
+
+TOKEN = os.getenv("BOT_TOKEN", "").strip()
+
 WEBHOOK_URL = os.getenv(
     "WEBHOOK_URL",
-    "https://mibogo-check-bot.onrender.com"
-)
+    "https://mibogo-check-bot.onrender.com",
+).strip()
 
 ALLOWED_USER_ID_TEXT = os.getenv(
     "ALLOWED_USER_ID",
-    "498546317"
-)
+    "498546317",
+).strip()
 
 PORT = int(
     os.getenv(
         "PORT",
-        "10000"
+        "10000",
     )
 )
 
 
+# =========================================================
 # 로그 설정
+# =========================================================
+
 logging.basicConfig(
     format=(
         "%(asctime)s - "
@@ -46,7 +53,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# =========================================================
 # 허용 사용자 ID
+# =========================================================
+
 try:
     ALLOWED_USER_ID = int(
         ALLOWED_USER_ID_TEXT
@@ -57,7 +67,13 @@ except ValueError as error:
     ) from error
 
 
+# =========================================================
 # 전체 명단
+#
+# 아래 MEMBERS에는 현재 사용 중인 명단을
+# 그대로 넣으면 됩니다.
+# =========================================================
+
 MEMBERS = {
     "선봉/1/김수연3",
     "선봉/1/기형진",
@@ -175,125 +191,68 @@ MEMBERS = {
 }
 
 
+# =========================================================
 # 보고 문구 추출 정규식
+#
+# 예:
+# 선봉/3/김아린
+# 선봉/1/김수연3
+# =========================================================
+
 PATTERN = re.compile(
     r"선봉/\d+/[^\s/]+"
 )
 
 
-def is_allowed(
-    update: Update
-) -> bool:
-    """허용된 사용자만 봇을 사용하게 합니다."""
+# =========================================================
+# 허용 사용자 확인
+# =========================================================
 
-    if update.effective_user is None:
+def is_allowed(
+    update: Update,
+) -> bool:
+    """허용된 사용자만 봇을 사용할 수 있게 합니다."""
+
+    user = update.effective_user
+
+    if user is None:
         return False
 
-    return (
-        update.effective_user.id
-        == ALLOWED_USER_ID
-    )
+    return user.id == ALLOWED_USER_ID
 
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    """봇 시작 안내."""
+# =========================================================
+# 미보고자 계산
+# =========================================================
 
-    if not is_allowed(update):
-        return
+def calculate_missing(
+    accumulated_reported: set[str],
+) -> list[str]:
+    """누적 보고자 목록을 기준으로 미보고자를 계산합니다."""
 
-    if update.message is None:
-        return
-
-    await update.message.reply_text(
-        "보고 내용을 그대로 붙여넣어 주세요.\n\n"
-        "여러 번 나누어 보내도 보고자가 계속 누적됩니다.\n"
-        "새로운 보고를 시작할 때는 /reset 을 보내주세요."
-    )
-
-
-async def reset(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    """누적 보고 기록 초기화."""
-
-    if not is_allowed(update):
-        return
-
-    if update.message is None:
-        return
-
-    context.user_data["reported"] = set()
-
-    await update.message.reply_text(
-        "✅ 누적 보고 기록을 초기화했습니다.\n"
-        "새로운 보고를 붙여넣어 주세요."
-    )
-
-
-async def check(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    """보고 내용을 확인하고 미보고 명단을 출력합니다."""
-
-    if not is_allowed(update):
-        return
-
-    if update.message is None:
-        return
-
-    text = update.message.text or ""
-
-    # 이번 메시지에서 보고된 사람 추출
-    new_reported = set(
-        PATTERN.findall(text)
-    )
-
-    # 전체 명단에 실제로 있는 사람만 인정
-    valid_reported = (
-        new_reported
-        & MEMBERS
-    )
-
-    # 누적 보고 기록
-    accumulated_reported = (
-        context.user_data.setdefault(
-            "reported",
-            set()
-        )
-    )
-
-    # 이번 보고자를 누적 기록에 추가
-    accumulated_reported.update(
-        valid_reported
-    )
-
-    # 미보고자 계산
-    missing = sorted(
-        MEMBERS
-        - accumulated_reported,
+    return sorted(
+        MEMBERS - accumulated_reported,
         key=lambda item: (
-            int(
-                item.split("/")[1]
-            ),
-            item.split("/")[2],
+            int(item.split("/", 2)[1]),
+            item.split("/", 2)[2],
         ),
     )
 
-    # 전원 보고 완료
-    if not missing:
-        await update.message.reply_text(
-            "🎉 전원 보고 완료!"
-        )
-        return
 
-    # 미보고 명단 작성
+# =========================================================
+# 미보고 명단 메시지 작성
+# =========================================================
+
+def make_missing_message(
+    missing: list[str],
+) -> str:
+    """미보고자 목록을 메시지 문자열로 만듭니다."""
+
+    if not missing:
+        return "🎉 전원 보고 완료!"
+
     result = [
-        "[미보고명단]"
+        "[미보고명단]",
     ]
 
     current_team = None
@@ -301,36 +260,249 @@ async def check(
     for person in missing:
         _, team, _ = person.split(
             "/",
-            2
+            2,
         )
 
         if current_team != team:
             current_team = team
+
             result.append(
                 f"\n{team}구역"
             )
 
         result.append(person)
 
-    await update.message.reply_text(
-        "\n".join(result)
+    return "\n".join(result)
+
+
+# =========================================================
+# /start
+# =========================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """봇 시작 안내."""
+
+    if not is_allowed(update):
+        return
+
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    await message.reply_text(
+        "보고 내용을 그대로 붙여넣어 주세요.\n\n"
+        "여러 번 나누어 보내도 보고자가 계속 누적됩니다.\n"
+        "시간이 지난 뒤 새 보고를 보내도 이어서 반영됩니다.\n\n"
+        "새로운 보고를 시작할 때는 /reset 을 보내주세요.\n"
+        "현재 미보고 명단을 다시 확인하려면 /status 를 보내주세요."
     )
 
+
+# =========================================================
+# /reset
+# =========================================================
+
+async def reset(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """누적 보고 기록 초기화."""
+
+    if not is_allowed(update):
+        return
+
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    context.user_data["reported"] = set()
+
+    await message.reply_text(
+        "✅ 누적 보고 기록을 초기화했습니다.\n"
+        "새로운 보고를 붙여넣어 주세요."
+    )
+
+    logger.info(
+        "누적 보고 기록 초기화: user_id=%s",
+        update.effective_user.id
+        if update.effective_user
+        else None,
+    )
+
+
+# =========================================================
+# /status
+# =========================================================
+
+async def status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """현재까지 누적된 내용을 기준으로 미보고 명단을 출력합니다."""
+
+    if not is_allowed(update):
+        return
+
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    accumulated_reported = context.user_data.setdefault(
+        "reported",
+        set(),
+    )
+
+    missing = calculate_missing(
+        accumulated_reported
+    )
+
+    await message.reply_text(
+        make_missing_message(missing)
+    )
+
+
+# =========================================================
+# 일반 보고 처리
+# =========================================================
+
+async def check(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """보고 내용을 누적하고 최신 미보고 명단을 출력합니다."""
+
+    if not is_allowed(update):
+        return
+
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    text = message.text or ""
+
+    logger.info(
+        "보고 메시지 수신: user_id=%s, update_id=%s, text=%r",
+        update.effective_user.id
+        if update.effective_user
+        else None,
+        update.update_id,
+        text[:300],
+    )
+
+    # 이번 메시지에서 보고 문구 추출
+    new_reported = set(
+        PATTERN.findall(text)
+    )
+
+    logger.info(
+        "정규식 추출 결과: %s",
+        sorted(new_reported),
+    )
+
+    # 전체 명단에 실제로 존재하는 보고자만 인정
+    valid_reported = (
+        new_reported
+        & MEMBERS
+    )
+
+    logger.info(
+        "유효 보고자: %s",
+        sorted(valid_reported),
+    )
+
+    # 명단과 일치하는 보고자가 없는 경우
+    if not valid_reported:
+        await message.reply_text(
+            "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다.\n\n"
+            "보고 문구가 아래 형식인지 확인해 주세요.\n"
+            "예: 선봉/3/김아린"
+        )
+        return
+
+    # 기존 누적 보고 기록
+    accumulated_reported = context.user_data.setdefault(
+        "reported",
+        set(),
+    )
+
+    # 이번 메시지에서 새로 추가되는 사람
+    newly_added = (
+        valid_reported
+        - accumulated_reported
+    )
+
+    # 기존 기록에 누적
+    accumulated_reported.update(
+        valid_reported
+    )
+
+    logger.info(
+        "새로 추가된 보고자: %s",
+        sorted(newly_added),
+    )
+
+    logger.info(
+        "현재 누적 보고자 수: %s",
+        len(accumulated_reported),
+    )
+
+    # 최신 미보고자 계산
+    missing = calculate_missing(
+        accumulated_reported
+    )
+
+    if newly_added:
+        header = (
+            "✅ 보고를 반영했습니다.\n"
+            f"새로 반영된 인원: {len(newly_added)}명\n\n"
+        )
+    else:
+        header = (
+            "ℹ️ 이미 반영된 보고입니다.\n\n"
+        )
+
+    # 새 보고를 받을 때마다 반드시 최신 목록 답장
+    await message.reply_text(
+        header
+        + make_missing_message(missing)
+    )
+
+
+# =========================================================
+# 오류 처리
+# =========================================================
 
 async def error_handler(
     update: object,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
     """오류를 Render 로그에 출력합니다."""
 
-    logger.exception(
+    logger.error(
         "텔레그램 업데이트 처리 중 오류 발생",
-        exc_info=context.error,
+        exc_info=(
+            type(context.error),
+            context.error,
+            context.error.__traceback__,
+        )
+        if context.error
+        else None,
     )
 
 
+# =========================================================
+# 봇 실행
+# =========================================================
+
 def main():
-    """웹훅 방식으로 봇을 실행합니다."""
+    """Render에서 웹훅 방식으로 봇을 실행합니다."""
 
     if not TOKEN:
         raise RuntimeError(
@@ -342,7 +514,6 @@ def main():
             "WEBHOOK_URL 환경변수가 설정되지 않았습니다."
         )
 
-    # 주소 끝의 / 제거
     base_url = WEBHOOK_URL.rstrip("/")
 
     webhook_path = "telegram"
@@ -360,14 +531,21 @@ def main():
     app.add_handler(
         CommandHandler(
             "start",
-            start
+            start,
         )
     )
 
     app.add_handler(
         CommandHandler(
             "reset",
-            reset
+            reset,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "status",
+            status,
         )
     )
 
@@ -375,7 +553,7 @@ def main():
         MessageHandler(
             filters.TEXT
             & ~filters.COMMAND,
-            check
+            check,
         )
     )
 
@@ -389,7 +567,7 @@ def main():
 
     logger.info(
         "Webhook URL: %s",
-        full_webhook_url
+        full_webhook_url,
     )
 
     app.run_webhook(
@@ -398,15 +576,20 @@ def main():
         url_path=webhook_path,
         webhook_url=full_webhook_url,
 
-        # Render에서는 외부 HTTPS를 사용하지만
-        # 내부 서버는 HTTP로 실행합니다.
+        # Render가 외부 HTTPS를 담당하고,
+        # 프로그램 내부에서는 HTTP 서버로 실행합니다.
         cert=None,
         key=None,
 
-        # 배포 전에 쌓인 오래된 메시지를 제거합니다.
-        drop_pending_updates=True,
+        # 중요:
+        # Render 재기동 중 Telegram에 쌓인 보고를 삭제하지 않습니다.
+        drop_pending_updates=False,
 
-        # 정상 종료 신호를 처리합니다.
+        # 현재 봇이 처리할 업데이트 종류
+        allowed_updates=[
+            "message",
+        ],
+
         close_loop=True,
         stop_signals=None,
     )
