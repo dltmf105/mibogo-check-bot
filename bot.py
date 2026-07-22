@@ -452,27 +452,24 @@ async def check(
         "현재 누적 보고자 수: %s",
         len(accumulated_reported),
     )
+# 최신 미보고자 계산
+missing = calculate_missing(
+    accumulated_reported
+)
 
-    # 최신 미보고자 계산
-    missing = calculate_missing(
-        accumulated_reported
-    )
-
-    if newly_added:
-        header = (
-            "✅ 보고를 반영했습니다.\n"
-            f"새로 반영된 인원: {len(newly_added)}명\n\n"
-        )
-    else:
-        header = (
-            "ℹ️ 이미 반영된 보고입니다.\n\n"
-        )
-
-    # 새 보고를 받을 때마다 반드시 최신 목록 답장
+# 이번 메시지에 새로 반영된 사람이 없는 경우
+if not newly_added:
     await message.reply_text(
-        header
+        "ℹ️ 이미 반영된 보고입니다.\n\n"
         + make_missing_message(missing)
     )
+    return
+
+# 새로운 보고가 있으면 안내 문장 없이 미보고 명단만 출력
+await message.reply_text(
+    make_missing_message(missing)
+)
+    
 
 
 # =========================================================
