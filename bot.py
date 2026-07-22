@@ -456,20 +456,18 @@ async def check(
 missing = calculate_missing(
     accumulated_reported
 )
+    # 이번 메시지에 새로 반영된 사람이 없는 경우
+    if not newly_added:
+        await message.reply_text(
+            "ℹ️ 이미 반영된 보고입니다.\n\n"
+            + make_missing_message(missing)
+        )
+        return
 
-# 이번 메시지에 새로 반영된 사람이 없는 경우
-if not newly_added:
+    # 새로운 보고가 있으면 안내 문장 없이 미보고 명단만 출력
     await message.reply_text(
-        "ℹ️ 이미 반영된 보고입니다.\n\n"
-        + make_missing_message(missing)
+        make_missing_message(missing)
     )
-    return
-
-# 새로운 보고가 있으면 안내 문장 없이 미보고 명단만 출력
-await message.reply_text(
-    make_missing_message(missing)
-)
-    
 
 
 # =========================================================
@@ -572,21 +570,12 @@ def main():
         port=PORT,
         url_path=webhook_path,
         webhook_url=full_webhook_url,
-
-        # Render가 외부 HTTPS를 담당하고,
-        # 프로그램 내부에서는 HTTP 서버로 실행합니다.
         cert=None,
         key=None,
-
-        # 중요:
-        # Render 재기동 중 Telegram에 쌓인 보고를 삭제하지 않습니다.
         drop_pending_updates=False,
-
-        # 현재 봇이 처리할 업데이트 종류
         allowed_updates=[
             "message",
         ],
-
         close_loop=True,
         stop_signals=None,
     )
