@@ -375,7 +375,7 @@ async def check(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    """보고 내용을 누적하고 최신 미보고 명단을 출력합니다."""
+    """보고 내용을 확인하고 미보고 명단을 출력합니다."""
 
     if not is_allowed(update):
         return
@@ -387,89 +387,94 @@ async def check(
 
     text = message.text or ""
 
-    logger.info(
-        "보고 메시지 수신: user_id=%s, update_id=%s, text=%r",
-        update.effective_user.id
-        if update.effective_user
-        else None,
-        update.update_id,
-        text[:300],
-    )
-
-    # 이번 메시지에서 보고 문구 추출
+    # 이번 메시지에서 보고된 사람 추출
     new_reported = set(
         PATTERN.findall(text)
     )
 
-    logger.info(
-        "정규식 추출 결과: %s",
-        sorted(new_reported),
-    )
-
-    # 전체 명단에 실제로 존재하는 보고자만 인정
+    # 전체 명단에 실제로 있는 사람만 인정
     valid_reported = (
         new_reported
         & MEMBERS
     )
 
-    logger.info(
-        "유효 보고자: %s",
-        sorted(valid_reported),
-    )
-
-    # 명단과 일치하는 보고자가 없는 경우
+    # 명단과 일치하는 사람이 없는 경우
     if not valid_reported:
         await message.reply_text(
-            "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다.\n\n"
+            "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다."
             "보고 문구가 아래 형식인지 확인해 주세요.\n"
             "예: 선봉/3/김아린"
         )
         return
 
-    # 기존 누적 보고 기록
+    # 누적 보고 기록
     accumulated_reported = context.user_data.setdefault(
         "reported",
         set(),
     )
 
-    # 이번 메시지에서 새로 추가되는 사람
+    # 이번 메시지에서 새로 반영된 사람
     newly_added = (
         valid_reported
         - accumulated_reported
     )
 
-    # 기존 기록에 누적
+    # 누적 기록에 추가
     accumulated_reported.update(
         valid_reported
     )
 
-    logger.info(
-        "새로 추가된 보고자: %s",
-        sorted(newly_added),
+    # 미보고자 계산
+    missing = sorted(
+        MEMBERS - accumulated_reported,
+        key=lambda item: (
+            int(item.split("/")[1]),
+            item.split("/")[2],
+        ),
     )
 
-    logger.info(
-        "현재 누적 보고자 수: %s",
-        len(accumulated_reported),
-    )
-    
-# 최신 미보고자 계산
-missing = calculate_missing(
-    accumulated_reported
-)
-# 이번 메시지에 새로 반영된 사람이 없는 경우
-if not newly_added:
+    # 전원 보고 완료
+    if not missing:
         await message.reply_text(
-            "ℹ️ 이미 반영된 보고입니다.\n\n"
-            + make_missing_message(missing)
+            "🎉 전원 보고 완료!"
         )
         return
 
-# 새로운 보고가 있으면 안내 문장 없이 미보고 명단만 출력
-await message.reply_text(
-        make_missing_message(missing)
-    )
+    # 미보고 명단 작성
+    result = [
+        "[미보고명단]"
+    ]
 
+    current_team = None
+
+    for person in missing:
+        _, team, _ = person.split(
+            "/",
+            2,
+        )
+
+        if current_team != team:
+            current_team = team
+            result.append(
+                f"\n{team}구역"
+            )
+
+        result.append(person)
+
+    missing_message = "\n".join(result)
+
+    # 전부 이미 반영된 보고인 경우
+    if not newly_added:
+        await message.reply_text(
+            "ℹ️ 이미 반영된 보고입니다.\n\n"
+            + missing_message
+        )
+        return
+
+    # 새로운 보고가 있으면 미보고 명단만 출력
+    await message.reply_text(
+        missing_message
+    )
 # =========================================================
 # 오류 처리
 # =========================================================
