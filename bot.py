@@ -465,8 +465,8 @@ if not newly_added:
         )
         return
 
-    # 새로운 보고가 있으면 안내 문장 없이 미보고 명단만 출력
-    await message.reply_text(
+# 새로운 보고가 있으면 안내 문장 없이 미보고 명단만 출력
+await message.reply_text(
         make_missing_message(missing)
     )
 
