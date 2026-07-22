@@ -452,6 +452,7 @@ async def check(
         "현재 누적 보고자 수: %s",
         len(accumulated_reported),
     )
+    
 # 최신 미보고자 계산
 missing = calculate_missing(
     accumulated_reported
@@ -468,7 +469,6 @@ missing = calculate_missing(
     await message.reply_text(
         make_missing_message(missing)
     )
-
 
 # =========================================================
 # 오류 처리
