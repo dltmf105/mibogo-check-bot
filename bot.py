@@ -219,9 +219,7 @@ def is_allowed(
         return False
 
     return user.id == ALLOWED_USER_ID
-
-
-# =========================================================
+    # =========================================================
 # 미보고자 계산
 # =========================================================
 
@@ -283,7 +281,7 @@ async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    """봇 시작 안내."""
+    """새로운 보고를 시작하고 누적 보고 기록을 초기화합니다."""
 
     if not is_allowed(update):
         return
@@ -293,42 +291,21 @@ async def start(
     if message is None:
         return
 
-    await message.reply_text(
-        "보고 내용을 그대로 붙여넣어 주세요.\n\n"
-        "여러 번 나누어 보내도 보고자가 계속 누적됩니다.\n"
-        "시간이 지난 뒤 새 보고를 보내도 이어서 반영됩니다.\n\n"
-        "새로운 보고를 시작할 때는 /reset 을 보내주세요.\n"
-        "현재 미보고 명단을 다시 확인하려면 /status 를 보내주세요."
-    )
-
-
-# =========================================================
-# /reset
-# =========================================================
-
-async def reset(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    """누적 보고 기록 초기화."""
-
-    if not is_allowed(update):
-        return
-
-    message = update.effective_message
-
-    if message is None:
-        return
-
+    # /start 명령을 실행했을 때만
+    # 기존 누적 보고 기록 초기화
     context.user_data["reported"] = set()
 
     await message.reply_text(
-        "✅ 누적 보고 기록을 초기화했습니다.\n"
-        "새로운 보고를 붙여넣어 주세요."
+        "✅ 새로운 보고를 시작합니다.\n\n"
+        "보고 내용을 그대로 붙여넣어 주세요.\n\n"
+        "여러 번 나누어 보내도 보고자가 계속 누적됩니다.\n"
+        "날짜가 바뀌어도 미보고 명단은 그대로 유지됩니다.\n"
+        "미보고자가 다음날 보고하면 미보고 명단에서 제거됩니다.\n\n"
+        "현재 미보고 명단을 다시 확인하려면 /status 를 보내주세요."
     )
 
     logger.info(
-        "누적 보고 기록 초기화: user_id=%s",
+        "새로운 보고 시작 및 누적 기록 초기화: user_id=%s",
         update.effective_user.id
         if update.effective_user
         else None,
@@ -401,80 +378,99 @@ async def check(
     # 명단과 일치하는 사람이 없는 경우
     if not valid_reported:
         await message.reply_text(
-            "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다."
+            "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다.\n"
             "보고 문구가 아래 형식인지 확인해 주세요.\n"
             "예: 선봉/3/김아린"
         )
         return
 
-    # 누적 보고 기록
+    # 기존 누적 보고 기록
     accumulated_reported = context.user_data.setdefault(
         "reported",
         set(),
     )
 
-    # 이번 메시지에서 새로 반영된 사람
+    # =====================================================
+    # 이미 이전에 보고 완료한 사람
+    # =====================================================
+
+    already_reported = (
+        valid_reported
+        & accumulated_reported
+    )
+
+    # =====================================================
+    # 이번에 처음 보고한 사람
+    # =====================================================
+
     newly_added = (
         valid_reported
         - accumulated_reported
     )
 
-    # 누적 기록에 추가
+    # =====================================================
+    # 누적 보고 기록에 추가
+    # =====================================================
+
     accumulated_reported.update(
         valid_reported
     )
 
-    # 미보고자 계산
-    missing = sorted(
-        MEMBERS - accumulated_reported,
-        key=lambda item: (
-            int(item.split("/")[1]),
-            item.split("/")[2],
-        ),
+    # =====================================================
+    # 현재 미보고자 계산
+    # =====================================================
+
+    missing = calculate_missing(
+        accumulated_reported
     )
 
-    # 전원 보고 완료
-    if not missing:
-        await message.reply_text(
-            "🎉 전원 보고 완료!"
-        )
-        return
+    missing_message = make_missing_message(
+        missing
+    )
 
-    # 미보고 명단 작성
-    result = [
-        "[미보고명단]"
-    ]
+    # =====================================================
+    # 이미 보고 완료된 사람이 다시 올라온 경우
+    # =====================================================
 
-    current_team = None
+    if already_reported:
 
-    for person in missing:
-        _, team, _ = person.split(
-            "/",
-            2,
+        already_list = sorted(
+            already_reported,
+            key=lambda item: (
+                int(item.split("/", 2)[1]),
+                item.split("/", 2)[2],
+            ),
         )
 
-        if current_team != team:
-            current_team = team
-            result.append(
-                f"\n{team}구역"
-            )
+        already_message = (
+            "ℹ️ 이미 보고 완료된 사람입니다.\n\n"
+            + "\n".join(already_list)
+        )
 
-        result.append(person)
-
-    missing_message = "\n".join(result)
-
-    # 전부 이미 반영된 보고인 경우
-    if not newly_added:
         await message.reply_text(
-            "ℹ️ 이미 반영된 보고입니다.\n\n"
+            already_message
+            + "\n\n"
             + missing_message
         )
+
         return
 
-    # 새로운 보고가 있으면 미보고 명단만 출력
+    # =====================================================
+    # 새로운 보고가 정상적으로 들어온 경우
+    # =====================================================
+
+    if newly_added:
+        await message.reply_text(
+            missing_message
+        )
+        return
+
+    # 혹시 모를 예외 상황
     await message.reply_text(
         missing_message
     )
+
+
 # =========================================================
 # 오류 처리
 # =========================================================
@@ -537,13 +533,6 @@ def main():
 
     app.add_handler(
         CommandHandler(
-            "reset",
-            reset,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
             "status",
             status,
         )
@@ -588,3 +577,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+    
+
+    
