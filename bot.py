@@ -419,3 +419,204 @@ async def check(
             "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다.\n\n"
             "보고 문구가 아래 형식인지 확인해 주세요.\n"
             "예: 선봉/3/김아린"
+        )
+        return
+
+    accumulated_reported = (
+        get_accumulated_reported(
+            context
+        )
+    )
+
+    already_reported = (
+        valid_reported
+        & accumulated_reported
+    )
+
+    newly_added = (
+        valid_reported
+        - accumulated_reported
+    )
+
+    accumulated_reported.update(
+        valid_reported
+    )
+
+    context.bot_data["reported"] = (
+        accumulated_reported
+    )
+
+    missing = calculate_missing(
+        accumulated_reported
+    )
+
+    missing_message = make_missing_message(
+        missing
+    )
+
+    if already_reported:
+
+        already_list = sorted(
+            already_reported,
+            key=member_sort_key,
+        )
+
+        already_message = (
+            "ℹ️ 이미 보고 완료된 사람이 포함되어 있습니다.\n\n"
+            + "\n".join(
+                already_list
+            )
+        )
+
+        if newly_added:
+
+            new_list = sorted(
+                newly_added,
+                key=member_sort_key,
+            )
+
+            new_message = (
+                "\n\n✅ 새로 보고 완료\n\n"
+                + "\n".join(
+                    new_list
+                )
+            )
+
+        else:
+            new_message = ""
+
+        await message.reply_text(
+            already_message
+            + new_message
+            + "\n\n"
+            + missing_message
+        )
+
+        return
+
+    if newly_added:
+        await message.reply_text(
+            missing_message
+        )
+        return
+
+    await message.reply_text(
+        missing_message
+    )
+
+
+# =========================================================
+# 오류 처리
+# =========================================================
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    logger.error(
+        "텔레그램 업데이트 처리 중 오류 발생",
+        exc_info=(
+            type(context.error),
+            context.error,
+            context.error.__traceback__,
+        )
+        if context.error
+        else None,
+    )
+
+
+# =========================================================
+# 봇 실행
+# =========================================================
+
+def main():
+
+    if not TOKEN:
+        raise RuntimeError(
+            "BOT_TOKEN 환경변수가 설정되지 않았습니다."
+        )
+
+    if not WEBHOOK_URL:
+        raise RuntimeError(
+            "WEBHOOK_URL 환경변수가 설정되지 않았습니다."
+        )
+
+    persistence = PicklePersistence(
+        filepath=DATA_FILE,
+        update_interval=5,
+    )
+
+    base_url = WEBHOOK_URL.rstrip("/")
+
+    webhook_path = "telegram"
+
+    full_webhook_url = (
+        f"{base_url}/{webhook_path}"
+    )
+
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .persistence(persistence)
+        .build()
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start,
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "status",
+            status,
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND,
+            check,
+        )
+    )
+
+    app.add_error_handler(
+        error_handler
+    )
+
+    logger.info(
+        "미보고 확인봇 웹훅 실행 시작"
+    )
+
+    logger.info(
+        "Webhook URL: %s",
+        full_webhook_url,
+    )
+
+    logger.info(
+        "보고 기록 저장 파일: %s",
+        DATA_FILE,
+    )
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=webhook_path,
+        webhook_url=full_webhook_url,
+        cert=None,
+        key=None,
+        drop_pending_updates=False,
+        allowed_updates=[
+            "message",
+        ],
+        close_loop=True,
+        stop_signals=None,
+    )
+
+
+if __name__ == "__main__":
+    main()
