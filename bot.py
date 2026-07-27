@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import logging
 from pathlib import Path
 
@@ -9,7 +10,6 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     ContextTypes,
-    PicklePersistence,
     filters,
 )
 
@@ -38,15 +38,9 @@ PORT = int(os.getenv("PORT", "10000"))
 RENDER_DATA_DIR = Path("/var/data")
 
 if RENDER_DATA_DIR.exists():
-    DATA_FILE = RENDER_DATA_DIR / "missing_report_bot.pkl"
+    DATA_FILE = RENDER_DATA_DIR / "reported.json"
 else:
-    DATA_FILE = Path("missing_report_bot.pkl")
-
-
-logger.info(
-    "보고 기록 저장 위치: %s",
-    DATA_FILE,
-)
+    DATA_FILE = Path("reported.json")
 
 
 # =========================================================
@@ -54,13 +48,12 @@ logger.info(
 # =========================================================
 
 ALLOWED_USER_IDS = {
-    498546317,
+    # 여기에 본인 텔레그램 숫자 ID 입력
+    # 498546317,
 }
 
 
 def is_allowed(update: Update) -> bool:
-    """허용된 사용자만 봇을 사용할 수 있도록 확인합니다."""
-
     user = update.effective_user
 
     if user is None:
@@ -203,59 +196,100 @@ PATTERN = re.compile(
 
 
 # =========================================================
-# 누적 보고자 가져오기
+# 정렬
 # =========================================================
 
-def get_accumulated_reported(
-    context: ContextTypes.DEFAULT_TYPE,
-) -> set[str]:
-
-    accumulated_reported = context.bot_data.setdefault(
-        "reported",
-        set(),
-    )
-
-    if not isinstance(
-        accumulated_reported,
-        set,
-    ):
-        accumulated_reported = set(
-            accumulated_reported
-        )
-
-        context.bot_data["reported"] = (
-            accumulated_reported
-        )
-
-    return accumulated_reported
-
-
-# =========================================================
-# 미보고자 정렬
-# =========================================================
-
-def member_sort_key(
-    item: str,
-):
+def member_sort_key(item: str):
     try:
-        _, team, name = item.split(
-            "/",
-            2,
-        )
+        _, team, name = item.split("/", 2)
 
         return (
             int(team),
             name,
         )
 
-    except (
-        ValueError,
-        IndexError,
-    ):
+    except (ValueError, IndexError):
         return (
             999999,
             item,
         )
+
+
+# =========================================================
+# 보고 기록 불러오기
+# =========================================================
+
+def load_reported() -> set[str]:
+    if not DATA_FILE.exists():
+        return set()
+
+    try:
+        with DATA_FILE.open(
+            "r",
+            encoding="utf-8",
+        ) as f:
+            data = json.load(f)
+
+        if not isinstance(data, list):
+            return set()
+
+        reported = {
+            str(person).strip()
+            for person in data
+            if str(person).strip()
+        }
+
+        # 현재 MEMBERS에 있는 사람만 인정
+        return reported & MEMBERS
+
+    except Exception:
+        logger.exception(
+            "보고 기록 불러오기 실패"
+        )
+        return set()
+
+
+# =========================================================
+# 보고 기록 저장
+# =========================================================
+
+def save_reported(
+    reported: set[str],
+) -> None:
+
+    DATA_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temp_file = DATA_FILE.with_suffix(
+        ".tmp"
+    )
+
+    sorted_reported = sorted(
+        reported,
+        key=member_sort_key,
+    )
+
+    with temp_file.open(
+        "w",
+        encoding="utf-8",
+    ) as f:
+        json.dump(
+            sorted_reported,
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        f.flush()
+        os.fsync(
+            f.fileno()
+        )
+
+    temp_file.replace(
+        DATA_FILE
+    )
 
 
 # =========================================================
@@ -330,25 +364,15 @@ async def start(
     if message is None:
         return
 
-    # /start를 눌렀을 때만 초기화
-    context.bot_data["reported"] = set()
-
     await message.reply_text(
-        "✅ 새로운 보고를 시작합니다.\n\n"
+        "✅ 미보고 확인봇이 실행 중입니다.\n\n"
         "보고 내용을 그대로 붙여넣어 주세요.\n\n"
-        "여러 번 나누어 보내도 보고자가 계속 누적됩니다.\n"
-        "날짜가 바뀌어도 미보고 명단은 그대로 유지됩니다.\n"
-        "미보고자가 다음날 보고하면 미보고 명단에서 제거됩니다.\n"
-        "봇이 재시작되어도 저장된 보고 기록을 다시 불러옵니다.\n\n"
-        "⚠️ /start 를 다시 보내면 기존 누적 기록이 초기화됩니다.\n\n"
-        "현재 미보고 명단을 다시 확인하려면 /status 를 보내주세요."
-    )
-
-    logger.info(
-        "새로운 보고 시작 및 누적 기록 초기화: user_id=%s",
-        update.effective_user.id
-        if update.effective_user
-        else None,
+        "여러 번 나누어 보내도 계속 누적됩니다.\n"
+        "날짜가 바뀌어도 기존 보고 기록이 유지됩니다.\n"
+        "미보고자가 다음날 보고해도 기존 기록에 이어서 처리됩니다.\n"
+        "봇이 재시작되어도 저장된 기록을 다시 불러옵니다.\n\n"
+        "📌 /status : 현재 미보고 명단 확인\n"
+        "📌 /reset : 누적 기록 전체 초기화"
     )
 
 
@@ -369,11 +393,7 @@ async def status(
     if message is None:
         return
 
-    accumulated_reported = (
-        get_accumulated_reported(
-            context
-        )
-    )
+    accumulated_reported = load_reported()
 
     missing = calculate_missing(
         accumulated_reported
@@ -383,6 +403,44 @@ async def status(
         make_missing_message(
             missing
         )
+    )
+
+
+# =========================================================
+# /reset
+# =========================================================
+
+async def reset(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if not is_allowed(update):
+        return
+
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    try:
+        save_reported(
+            set()
+        )
+
+    except Exception:
+        logger.exception(
+            "보고 기록 초기화 실패"
+        )
+
+        await message.reply_text(
+            "⚠️ 보고 기록 초기화 중 오류가 발생했습니다."
+        )
+        return
+
+    await message.reply_text(
+        "♻️ 기존 누적 보고 기록을 모두 초기화했습니다.\n"
+        "새로운 보고 집계를 시작합니다."
     )
 
 
@@ -405,9 +463,10 @@ async def check(
 
     text = message.text or ""
 
-    new_reported = set(
-        PATTERN.findall(text)
-    )
+    new_reported = {
+        item.strip()
+        for item in PATTERN.findall(text)
+    }
 
     valid_reported = (
         new_reported
@@ -422,11 +481,7 @@ async def check(
         )
         return
 
-    accumulated_reported = (
-        get_accumulated_reported(
-            context
-        )
-    )
+    accumulated_reported = load_reported()
 
     already_reported = (
         valid_reported
@@ -438,16 +493,31 @@ async def check(
         - accumulated_reported
     )
 
-    accumulated_reported.update(
+    updated_reported = set(
+        accumulated_reported
+    )
+
+    updated_reported.update(
         valid_reported
     )
 
-    context.bot_data["reported"] = (
-        accumulated_reported
-    )
+    try:
+        save_reported(
+            updated_reported
+        )
+
+    except Exception:
+        logger.exception(
+            "보고 기록 저장 실패"
+        )
+
+        await message.reply_text(
+            "⚠️ 보고 기록 저장 중 오류가 발생했습니다."
+        )
+        return
 
     missing = calculate_missing(
-        accumulated_reported
+        updated_reported
     )
 
     missing_message = make_missing_message(
@@ -494,12 +564,6 @@ async def check(
 
         return
 
-    if newly_added:
-        await message.reply_text(
-            missing_message
-        )
-        return
-
     await message.reply_text(
         missing_message
     )
@@ -542,11 +606,6 @@ def main():
             "WEBHOOK_URL 환경변수가 설정되지 않았습니다."
         )
 
-    persistence = PicklePersistence(
-        filepath=DATA_FILE,
-        update_interval=5,
-    )
-
     base_url = WEBHOOK_URL.rstrip("/")
 
     webhook_path = "telegram"
@@ -558,7 +617,6 @@ def main():
     app = (
         ApplicationBuilder()
         .token(TOKEN)
-        .persistence(persistence)
         .build()
     )
 
@@ -577,6 +635,13 @@ def main():
     )
 
     app.add_handler(
+        CommandHandler(
+            "reset",
+            reset,
+        )
+    )
+
+    app.add_handler(
         MessageHandler(
             filters.TEXT
             & ~filters.COMMAND,
@@ -590,16 +655,6 @@ def main():
 
     logger.info(
         "미보고 확인봇 웹훅 실행 시작"
-    )
-
-    logger.info(
-        "Webhook URL: %s",
-        full_webhook_url,
-    )
-
-    logger.info(
-        "보고 기록 저장 파일: %s",
-        DATA_FILE,
     )
 
     app.run_webhook(
@@ -620,3 +675,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
