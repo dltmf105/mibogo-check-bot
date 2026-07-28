@@ -31,7 +31,6 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
@@ -50,7 +49,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 # =========================================================
-# 허용 사용자
+# 허용 사용자 설정
 # =========================================================
 
 ALLOWED_USER_IDS = {
@@ -194,7 +193,7 @@ MEMBERS = {
 
 
 # =========================================================
-# 보고 문구 추출
+# 보고 문구 추출 정규식
 # =========================================================
 
 PATTERN = re.compile(
@@ -225,37 +224,38 @@ def member_sort_key(item: str):
 # =========================================================
 # 현재 회차
 #
-# 월요일 + 화요일 = 같은 회차
+# 일요일 + 월요일 = 같은 회차
 # 수요일 + 목요일 = 같은 회차
+#
+# Python weekday()
+# 월=0 / 화=1 / 수=2 / 목=3 / 금=4 / 토=5 / 일=6
 # =========================================================
 
 def get_current_cycle_id() -> str | None:
     now = datetime.now(KST)
     weekday = now.weekday()
 
-    # 월요일
+    # 일요일: 새 일·월 회차 시작
+    if weekday == 6:
+        sunday = now.date()
+
+        return f"SUN_MON_{sunday.isoformat()}"
+
+    # 월요일: 전날 일요일과 동일한 회차
     if weekday == 0:
-        monday = now.date()
-
-        return f"MON_TUE_{monday.isoformat()}"
-
-    # 화요일
-    # 전날 월요일과 같은 회차
-    if weekday == 1:
-        monday = (
+        sunday = (
             now - timedelta(days=1)
         ).date()
 
-        return f"MON_TUE_{monday.isoformat()}"
+        return f"SUN_MON_{sunday.isoformat()}"
 
-    # 수요일
+    # 수요일: 새 수·목 회차 시작
     if weekday == 2:
         wednesday = now.date()
 
         return f"WED_THU_{wednesday.isoformat()}"
 
-    # 목요일
-    # 전날 수요일과 같은 회차
+    # 목요일: 전날 수요일과 동일한 회차
     if weekday == 3:
         wednesday = (
             now - timedelta(days=1)
@@ -263,7 +263,7 @@ def get_current_cycle_id() -> str | None:
 
         return f"WED_THU_{wednesday.isoformat()}"
 
-    # 금요일 / 토요일 / 일요일
+    # 화요일 / 금요일 / 토요일
     return None
 
 
@@ -290,8 +290,7 @@ def supabase_request(
         "User-Agent": "missing-report-bot/1.0",
     }
 
-    # 기존 service_role JWT 키만 Bearer 헤더 추가
-    # 새 sb_secret_ 키에는 Authorization 헤더를 넣지 않음
+    # 기존 eyJ 형태의 service_role 키 사용 시
     if SUPABASE_KEY.startswith("eyJ"):
         headers["Authorization"] = (
             f"Bearer {SUPABASE_KEY}"
@@ -454,7 +453,7 @@ def add_reported_members(
 # =========================================================
 # 현재 회차 초기화
 #
-# 오직 /reset에서만 실행
+# 오직 /reset에서만 호출
 # =========================================================
 
 def delete_current_cycle(
@@ -489,7 +488,7 @@ def calculate_missing(
 
 
 # =========================================================
-# 미보고 명단 메시지
+# 미보고 명단 메시지 작성
 # =========================================================
 
 def make_missing_message(
@@ -530,24 +529,25 @@ def make_missing_message(
 
 
 # =========================================================
-# 사용하지 않는 요일 안내
+# 집계하지 않는 요일 안내
 # =========================================================
 
 async def send_not_active_message(
     message,
 ):
     await message.reply_text(
-        "📌 현재는 보고 집계 사용 요일이 아닙니다.\n\n"
-        "월요일 → 화요일\n"
-        "수요일 → 목요일\n\n"
-        "위 회차에서 사용해 주세요."
+        "📌 오늘은 보고 집계일이 아닙니다.\n\n"
+        "보고 집계는 아래 요일에만 가능합니다.\n\n"
+        "일요일 · 월요일\n"
+        "수요일 · 목요일"
     )
 
 
 # =========================================================
 # /start
 #
-# 초기화하지 않음
+# 안내문과 미보고 명단을 별도 메시지로 전송
+# 초기화 기능 없음
 # =========================================================
 
 async def start(
@@ -587,15 +587,20 @@ async def start(
         reported
     )
 
+    # 첫 번째 메시지: 안내문
     await message.reply_text(
         "✅ 미보고 확인봇이 실행 중입니다.\n\n"
         "보고 내용을 그대로 붙여넣어 주세요.\n\n"
-        "월요일과 화요일은 같은 보고 회차입니다.\n"
+        "일요일과 월요일은 같은 보고 회차입니다.\n"
         "수요일과 목요일은 같은 보고 회차입니다.\n"
-        "화요일과 목요일에는 기록이 초기화되지 않습니다.\n\n"
+        "월요일과 목요일에는 앞날의 기록이 그대로 유지됩니다.\n\n"
         "📌 /status : 현재 미보고 명단 확인\n"
-        "📌 /reset : 현재 회차 기록 초기화\n\n"
-        + make_missing_message(
+        "📌 /reset : 현재 회차 기록 초기화"
+    )
+
+    # 두 번째 메시지: 미보고 명단
+    await message.reply_text(
+        make_missing_message(
             missing
         )
     )
@@ -604,7 +609,8 @@ async def start(
 # =========================================================
 # /status
 #
-# 초기화하지 않음
+# 현재 미보고 명단만 전송
+# 초기화 기능 없음
 # =========================================================
 
 async def status(
@@ -654,7 +660,7 @@ async def status(
 # =========================================================
 # /reset
 #
-# 이 명령을 직접 보낼 때만 초기화
+# 직접 명령했을 때만 현재 회차 초기화
 # =========================================================
 
 async def reset(
@@ -715,6 +721,7 @@ async def check(
 
     cycle_id = get_current_cycle_id()
 
+    # 화요일 / 금요일 / 토요일에는 보고 처리 안 함
     if cycle_id is None:
         await send_not_active_message(
             message
@@ -725,7 +732,9 @@ async def check(
 
     found_reported = {
         item.strip()
-        for item in PATTERN.findall(text)
+        for item in PATTERN.findall(
+            text
+        )
     }
 
     valid_reported = (
@@ -766,7 +775,7 @@ async def check(
         - accumulated_reported
     )
 
-    # 새 보고자만 저장
+    # 새 보고자만 Supabase에 추가
     if newly_added:
         try:
             await asyncio.to_thread(
@@ -781,7 +790,7 @@ async def check(
             )
             return
 
-    # 저장 후 DB 상태 다시 조회
+    # 저장 후 실제 DB 상태 다시 조회
     try:
         updated_reported = (
             await asyncio.to_thread(
@@ -804,6 +813,7 @@ async def check(
         missing
     )
 
+    # 이미 보고한 사람이 포함된 경우
     if already_reported:
 
         already_list = sorted(
@@ -835,15 +845,19 @@ async def check(
         else:
             new_message = ""
 
+        # 안내 메시지와 미보고 명단 따로 전송
         await message.reply_text(
             already_message
             + new_message
-            + "\n\n"
-            + missing_message
+        )
+
+        await message.reply_text(
+            missing_message
         )
 
         return
 
+    # 전부 새로운 보고자라면 미보고 명단만 전송
     await message.reply_text(
         missing_message
     )
@@ -870,7 +884,7 @@ async def error_handler(
 
 
 # =========================================================
-# 환경변수 검사
+# 환경변수 확인
 # =========================================================
 
 def validate_environment() -> None:
@@ -895,7 +909,9 @@ def validate_environment() -> None:
             "SUPABASE_KEY 환경변수가 설정되지 않았습니다."
         )
 
-    if not SUPABASE_URL.startswith("https://"):
+    if not SUPABASE_URL.startswith(
+        "https://"
+    ):
         raise RuntimeError(
             "SUPABASE_URL은 https://로 시작해야 합니다."
         )
