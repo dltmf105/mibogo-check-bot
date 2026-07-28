@@ -46,17 +46,15 @@ SUPABASE_KEY = os.getenv(
     "",
 ).strip()
 
-
-# 한국 시간
 KST = ZoneInfo("Asia/Seoul")
 
 
 # =========================================================
-# 허용 사용자 설정
+# 허용 사용자
 # =========================================================
 
 ALLOWED_USER_IDS = {
-    # 여기에 본인 텔레그램 숫자 ID를 넣으세요.
+    # 여기에 본인 텔레그램 숫자 ID 입력
     # 예:
     # 498546317,
 }
@@ -68,7 +66,6 @@ def is_allowed(update: Update) -> bool:
     if user is None:
         return False
 
-    # ID를 넣지 않았다면 모든 사용자 허용
     if not ALLOWED_USER_IDS:
         return True
 
@@ -197,7 +194,7 @@ MEMBERS = {
 
 
 # =========================================================
-# 보고 문구 추출 정규식
+# 보고 문구 추출
 # =========================================================
 
 PATTERN = re.compile(
@@ -226,64 +223,52 @@ def member_sort_key(item: str):
 
 
 # =========================================================
-# 현재 회차 ID
+# 현재 회차
 #
 # 월요일 + 화요일 = 같은 회차
 # 수요일 + 목요일 = 같은 회차
-#
-# Python weekday()
-# 월=0 화=1 수=2 목=3 금=4 토=5 일=6
 # =========================================================
 
 def get_current_cycle_id() -> str | None:
     now = datetime.now(KST)
-
     weekday = now.weekday()
 
     # 월요일
     if weekday == 0:
         monday = now.date()
 
-        return (
-            f"MON_TUE_{monday.isoformat()}"
-        )
+        return f"MON_TUE_{monday.isoformat()}"
 
     # 화요일
-    # 전날 월요일과 동일한 회차 ID 사용
+    # 전날 월요일과 같은 회차
     if weekday == 1:
         monday = (
             now - timedelta(days=1)
         ).date()
 
-        return (
-            f"MON_TUE_{monday.isoformat()}"
-        )
+        return f"MON_TUE_{monday.isoformat()}"
 
     # 수요일
     if weekday == 2:
         wednesday = now.date()
 
-        return (
-            f"WED_THU_{wednesday.isoformat()}"
-        )
+        return f"WED_THU_{wednesday.isoformat()}"
 
     # 목요일
-    # 전날 수요일과 동일한 회차 ID 사용
+    # 전날 수요일과 같은 회차
     if weekday == 3:
         wednesday = (
             now - timedelta(days=1)
         ).date()
 
-        return (
-            f"WED_THU_{wednesday.isoformat()}"
-        )
+        return f"WED_THU_{wednesday.isoformat()}"
 
     # 금요일 / 토요일 / 일요일
     return None
 
 
 # =========================================================
-# Supabase REST API 요청
+# Supabase REST 요청
 # =========================================================
 
 def supabase_request(
@@ -292,13 +277,6 @@ def supabase_request(
     body=None,
     prefer: str | None = None,
 ):
-    """
-    Supabase REST API 요청.
-
-    새 sb_secret_ 키와 기존 service_role 키 모두
-    apikey 헤더를 통해 사용할 수 있도록 구성합니다.
-    """
-
     url = (
         f"{SUPABASE_URL}"
         f"/rest/v1/"
@@ -311,6 +289,13 @@ def supabase_request(
         "Accept": "application/json",
         "User-Agent": "missing-report-bot/1.0",
     }
+
+    # 기존 service_role JWT 키만 Bearer 헤더 추가
+    # 새 sb_secret_ 키에는 Authorization 헤더를 넣지 않음
+    if SUPABASE_KEY.startswith("eyJ"):
+        headers["Authorization"] = (
+            f"Bearer {SUPABASE_KEY}"
+        )
 
     if prefer:
         headers["Prefer"] = prefer
@@ -333,7 +318,7 @@ def supabase_request(
     try:
         with urllib.request.urlopen(
             request,
-            timeout=15,
+            timeout=20,
         ) as response:
 
             raw = response.read()
@@ -398,8 +383,13 @@ def load_reported(
         f"reported_members?{query}",
     )
 
-    if not isinstance(result, list):
+    if result is None:
         return set()
+
+    if not isinstance(result, list):
+        raise RuntimeError(
+            "Supabase 응답 형식이 올바르지 않습니다."
+        )
 
     reported = set()
 
@@ -416,18 +406,13 @@ def load_reported(
         ).strip()
 
         if member in MEMBERS:
-            reported.add(
-                member
-            )
+            reported.add(member)
 
     return reported
 
 
 # =========================================================
-# 새 보고자 Supabase에 추가
-#
-# 기존 행은 삭제하거나 덮어쓰지 않습니다.
-# 같은 cycle_id + member는 PK로 중복 방지됩니다.
+# 새 보고자 저장
 # =========================================================
 
 def add_reported_members(
@@ -451,18 +436,13 @@ def add_reported_members(
 
     query = urllib.parse.urlencode(
         {
-            "on_conflict": (
-                "cycle_id,member"
-            )
+            "on_conflict": "cycle_id,member",
         }
     )
 
     supabase_request(
         "POST",
-        (
-            "reported_members?"
-            + query
-        ),
+        f"reported_members?{query}",
         body=rows,
         prefer=(
             "resolution=ignore-duplicates,"
@@ -474,7 +454,7 @@ def add_reported_members(
 # =========================================================
 # 현재 회차 초기화
 #
-# 오직 /reset에서만 호출합니다.
+# 오직 /reset에서만 실행
 # =========================================================
 
 def delete_current_cycle(
@@ -483,18 +463,13 @@ def delete_current_cycle(
 
     query = urllib.parse.urlencode(
         {
-            "cycle_id": (
-                f"eq.{cycle_id}"
-            )
+            "cycle_id": f"eq.{cycle_id}",
         }
     )
 
     supabase_request(
         "DELETE",
-        (
-            "reported_members?"
-            + query
-        ),
+        f"reported_members?{query}",
         prefer="return=minimal",
     )
 
@@ -539,9 +514,7 @@ def make_missing_message(
             )
 
         except ValueError:
-            result.append(
-                person
-            )
+            result.append(person)
             continue
 
         if current_team != team:
@@ -551,13 +524,9 @@ def make_missing_message(
                 f"\n{team}구역"
             )
 
-        result.append(
-            person
-        )
+        result.append(person)
 
-    return "\n".join(
-        result
-    )
+    return "\n".join(result)
 
 
 # =========================================================
@@ -578,7 +547,7 @@ async def send_not_active_message(
 # =========================================================
 # /start
 #
-# 초기화 기능 없음
+# 초기화하지 않음
 # =========================================================
 
 async def start(
@@ -594,9 +563,7 @@ async def start(
     if message is None:
         return
 
-    cycle_id = (
-        get_current_cycle_id()
-    )
+    cycle_id = get_current_cycle_id()
 
     if cycle_id is None:
         await send_not_active_message(
@@ -625,9 +592,9 @@ async def start(
         "보고 내용을 그대로 붙여넣어 주세요.\n\n"
         "월요일과 화요일은 같은 보고 회차입니다.\n"
         "수요일과 목요일은 같은 보고 회차입니다.\n"
-        "화요일과 목요일에는 기존 미보고 명단이 그대로 유지됩니다.\n\n"
+        "화요일과 목요일에는 기록이 초기화되지 않습니다.\n\n"
         "📌 /status : 현재 미보고 명단 확인\n"
-        "📌 /reset : 현재 회차 기록 전체 초기화\n\n"
+        "📌 /reset : 현재 회차 기록 초기화\n\n"
         + make_missing_message(
             missing
         )
@@ -637,8 +604,7 @@ async def start(
 # =========================================================
 # /status
 #
-# DB를 읽기만 함.
-# 초기화 기능 없음.
+# 초기화하지 않음
 # =========================================================
 
 async def status(
@@ -654,9 +620,7 @@ async def status(
     if message is None:
         return
 
-    cycle_id = (
-        get_current_cycle_id()
-    )
+    cycle_id = get_current_cycle_id()
 
     if cycle_id is None:
         await send_not_active_message(
@@ -690,7 +654,7 @@ async def status(
 # =========================================================
 # /reset
 #
-# 이 명령에서만 현재 회차 데이터를 삭제합니다.
+# 이 명령을 직접 보낼 때만 초기화
 # =========================================================
 
 async def reset(
@@ -706,9 +670,7 @@ async def reset(
     if message is None:
         return
 
-    cycle_id = (
-        get_current_cycle_id()
-    )
+    cycle_id = get_current_cycle_id()
 
     if cycle_id is None:
         await send_not_active_message(
@@ -751,9 +713,7 @@ async def check(
     if message is None:
         return
 
-    cycle_id = (
-        get_current_cycle_id()
-    )
+    cycle_id = get_current_cycle_id()
 
     if cycle_id is None:
         await send_not_active_message(
@@ -761,16 +721,11 @@ async def check(
         )
         return
 
-    text = (
-        message.text
-        or ""
-    )
+    text = message.text or ""
 
     found_reported = {
         item.strip()
-        for item in PATTERN.findall(
-            text
-        )
+        for item in PATTERN.findall(text)
     }
 
     valid_reported = (
@@ -786,10 +741,7 @@ async def check(
         )
         return
 
-    # =====================================================
-    # 1. 현재 회차의 기존 보고 완료자 조회
-    # =========================================================
-
+    # 현재 회차의 기존 보고자 조회
     try:
         accumulated_reported = (
             await asyncio.to_thread(
@@ -804,24 +756,17 @@ async def check(
         )
         return
 
-    # 이미 보고한 사람
     already_reported = (
         valid_reported
         & accumulated_reported
     )
 
-    # 이번에 새로 보고한 사람
     newly_added = (
         valid_reported
         - accumulated_reported
     )
 
-    # =====================================================
-    # 2. 새 보고자만 DB에 추가
-    #
-    # 기존 보고 기록은 삭제하지 않습니다.
-    # =========================================================
-
+    # 새 보고자만 저장
     if newly_added:
         try:
             await asyncio.to_thread(
@@ -836,12 +781,7 @@ async def check(
             )
             return
 
-    # =====================================================
-    # 3. 저장 후 Supabase에서 다시 조회
-    #
-    # 실제 DB 상태를 기준으로 미보고자를 계산합니다.
-    # =========================================================
-
+    # 저장 후 DB 상태 다시 조회
     try:
         updated_reported = (
             await asyncio.to_thread(
@@ -860,15 +800,9 @@ async def check(
         updated_reported
     )
 
-    missing_message = (
-        make_missing_message(
-            missing
-        )
+    missing_message = make_missing_message(
+        missing
     )
-
-    # =====================================================
-    # 이미 보고한 사람이 포함되어 있을 때
-    # =========================================================
 
     if already_reported:
 
@@ -910,10 +844,6 @@ async def check(
 
         return
 
-    # =====================================================
-    # 모두 새로운 보고자인 경우
-    # =========================================================
-
     await message.reply_text(
         missing_message
     )
@@ -940,7 +870,7 @@ async def error_handler(
 
 
 # =========================================================
-# 시작 전 환경변수 검사
+# 환경변수 검사
 # =========================================================
 
 def validate_environment() -> None:
@@ -965,11 +895,23 @@ def validate_environment() -> None:
             "SUPABASE_KEY 환경변수가 설정되지 않았습니다."
         )
 
-    if not SUPABASE_URL.startswith(
-        "https://"
+    if not SUPABASE_URL.startswith("https://"):
+        raise RuntimeError(
+            "SUPABASE_URL은 https://로 시작해야 합니다."
+        )
+
+    if "/rest/v1" in SUPABASE_URL:
+        raise RuntimeError(
+            "SUPABASE_URL에는 /rest/v1을 넣으면 안 됩니다."
+        )
+
+    if not (
+        SUPABASE_KEY.startswith("sb_secret_")
+        or SUPABASE_KEY.startswith("eyJ")
     ):
         raise RuntimeError(
-            "SUPABASE_URL 형식이 올바르지 않습니다."
+            "SUPABASE_KEY에는 sb_secret_ 키 또는 "
+            "service_role 키를 입력해야 합니다."
         )
 
 
@@ -981,9 +923,7 @@ def main():
 
     validate_environment()
 
-    base_url = (
-        WEBHOOK_URL.rstrip("/")
-    )
+    base_url = WEBHOOK_URL.rstrip("/")
 
     webhook_path = "telegram"
 
@@ -1052,6 +992,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
