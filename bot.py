@@ -3,6 +3,8 @@ import re
 import json
 import logging
 from pathlib import Path
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from telegram import Update
 from telegram.ext import (
@@ -25,10 +27,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
 TOKEN = os.getenv("BOT_TOKEN", "")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 PORT = int(os.getenv("PORT", "10000"))
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 # =========================================================
@@ -187,7 +190,7 @@ MEMBERS = {
 
 
 # =========================================================
-# 보고 문구 추출 정규식
+# 보고 문구 추출
 # =========================================================
 
 PATTERN = re.compile(
@@ -216,12 +219,53 @@ def member_sort_key(item: str):
 
 
 # =========================================================
-# 보고 기록 불러오기
+# 현재 보고 회차 구하기
+#
+# 일요일 + 월요일 = 같은 회차
+# 수요일 + 목요일 = 같은 회차
 # =========================================================
 
-def load_reported() -> set[str]:
+def get_current_cycle_id() -> str | None:
+    now = datetime.now(KST)
+
+    # Python weekday()
+    # 월=0 화=1 수=2 목=3 금=4 토=5 일=6
+    weekday = now.weekday()
+
+    # 일요일
+    if weekday == 6:
+        cycle_date = now.date()
+        return f"SUN_MON_{cycle_date.isoformat()}"
+
+    # 월요일 -> 전날 일요일 회차
+    if weekday == 0:
+        sunday = (now - timedelta(days=1)).date()
+        return f"SUN_MON_{sunday.isoformat()}"
+
+    # 수요일
+    if weekday == 2:
+        cycle_date = now.date()
+        return f"WED_THU_{cycle_date.isoformat()}"
+
+    # 목요일 -> 전날 수요일 회차
+    if weekday == 3:
+        wednesday = (now - timedelta(days=1)).date()
+        return f"WED_THU_{wednesday.isoformat()}"
+
+    # 화 / 금 / 토
+    return None
+
+
+# =========================================================
+# 저장 데이터 불러오기
+# =========================================================
+
+def load_data() -> dict:
     if not DATA_FILE.exists():
-        return set()
+        return {
+            "cycle_id": None,
+            "reported": [],
+        }
 
     try:
         with DATA_FILE.open(
@@ -230,30 +274,40 @@ def load_reported() -> set[str]:
         ) as f:
             data = json.load(f)
 
-        if not isinstance(data, list):
-            return set()
+        if not isinstance(data, dict):
+            return {
+                "cycle_id": None,
+                "reported": [],
+            }
 
-        reported = {
-            str(person).strip()
-            for person in data
-            if str(person).strip()
+        cycle_id = data.get("cycle_id")
+        reported = data.get("reported", [])
+
+        if not isinstance(reported, list):
+            reported = []
+
+        return {
+            "cycle_id": cycle_id,
+            "reported": reported,
         }
-
-        # 현재 MEMBERS에 있는 사람만 인정
-        return reported & MEMBERS
 
     except Exception:
         logger.exception(
             "보고 기록 불러오기 실패"
         )
-        return set()
+
+        return {
+            "cycle_id": None,
+            "reported": [],
+        }
 
 
 # =========================================================
-# 보고 기록 저장
+# 저장
 # =========================================================
 
-def save_reported(
+def save_data(
+    cycle_id: str,
     reported: set[str],
 ) -> None:
 
@@ -266,17 +320,21 @@ def save_reported(
         ".tmp"
     )
 
-    sorted_reported = sorted(
-        reported,
-        key=member_sort_key,
-    )
+    data = {
+        "cycle_id": cycle_id,
+        "reported": sorted(
+            reported,
+            key=member_sort_key,
+        ),
+    }
 
     with temp_file.open(
         "w",
         encoding="utf-8",
     ) as f:
+
         json.dump(
-            sorted_reported,
+            data,
             f,
             ensure_ascii=False,
             indent=2,
@@ -293,21 +351,80 @@ def save_reported(
 
 
 # =========================================================
-# 미보고자 계산
+# 현재 회차 보고자 가져오기
+# =========================================================
+
+def get_current_reported() -> tuple[str | None, set[str]]:
+    cycle_id = get_current_cycle_id()
+
+    # 화/금/토
+    if cycle_id is None:
+        return None, set()
+
+    data = load_data()
+
+    saved_cycle_id = data.get(
+        "cycle_id"
+    )
+
+    saved_reported = {
+        str(person).strip()
+        for person in data.get(
+            "reported",
+            []
+        )
+        if str(person).strip()
+    }
+
+    saved_reported &= MEMBERS
+
+    # =====================================================
+    # 같은 회차라면 그대로 이어서 사용
+    #
+    # 일 -> 월
+    # 수 -> 목
+    # =====================================================
+
+    if saved_cycle_id == cycle_id:
+        return (
+            cycle_id,
+            saved_reported,
+        )
+
+    # =====================================================
+    # 다른 회차라면 새 집계 시작
+    #
+    # 지난 일/월 회차 → 새로운 수요일
+    # 지난 수/목 회차 → 새로운 일요일
+    # =====================================================
+
+    save_data(
+        cycle_id,
+        set(),
+    )
+
+    return (
+        cycle_id,
+        set(),
+    )
+
+
+# =========================================================
+# 미보고 계산
 # =========================================================
 
 def calculate_missing(
-    accumulated_reported: set[str],
+    reported: set[str],
 ) -> list[str]:
 
     return sorted(
-        MEMBERS - accumulated_reported,
+        MEMBERS - reported,
         key=member_sort_key,
     )
 
 
 # =========================================================
-# 미보고 명단 메시지 작성
+# 미보고 메시지
 # =========================================================
 
 def make_missing_message(
@@ -332,7 +449,9 @@ def make_missing_message(
             )
 
         except ValueError:
-            result.append(person)
+            result.append(
+                person
+            )
             continue
 
         if current_team != team:
@@ -342,9 +461,28 @@ def make_missing_message(
                 f"\n{team}구역"
             )
 
-        result.append(person)
+        result.append(
+            person
+        )
 
-    return "\n".join(result)
+    return "\n".join(
+        result
+    )
+
+
+# =========================================================
+# 사용 가능 요일 안내
+# =========================================================
+
+async def send_not_active_message(
+    message,
+):
+    await message.reply_text(
+        "📌 현재는 보고 집계 사용 요일이 아닙니다.\n\n"
+        "일요일 → 월요일\n"
+        "수요일 → 목요일\n\n"
+        "위 두 회차에서 사용해 주세요."
+    )
 
 
 # =========================================================
@@ -364,15 +502,31 @@ async def start(
     if message is None:
         return
 
+    cycle_id, reported = (
+        get_current_reported()
+    )
+
+    if cycle_id is None:
+        await send_not_active_message(
+            message
+        )
+        return
+
+    missing = calculate_missing(
+        reported
+    )
+
     await message.reply_text(
         "✅ 미보고 확인봇이 실행 중입니다.\n\n"
         "보고 내용을 그대로 붙여넣어 주세요.\n\n"
-        "여러 번 나누어 보내도 계속 누적됩니다.\n"
-        "날짜가 바뀌어도 기존 보고 기록이 유지됩니다.\n"
-        "미보고자가 다음날 보고해도 기존 기록에 이어서 처리됩니다.\n"
-        "봇이 재시작되어도 저장된 기록을 다시 불러옵니다.\n\n"
+        "일요일에 시작한 집계는 월요일까지 유지됩니다.\n"
+        "수요일에 시작한 집계는 목요일까지 유지됩니다.\n"
+        "날짜가 넘어가도 같은 회차의 미보고 명단은 초기화되지 않습니다.\n\n"
         "📌 /status : 현재 미보고 명단 확인\n"
-        "📌 /reset : 누적 기록 전체 초기화"
+        "📌 /reset : 현재 회차 기록 초기화\n\n"
+        + make_missing_message(
+            missing
+        )
     )
 
 
@@ -393,10 +547,18 @@ async def status(
     if message is None:
         return
 
-    accumulated_reported = load_reported()
+    cycle_id, reported = (
+        get_current_reported()
+    )
+
+    if cycle_id is None:
+        await send_not_active_message(
+            message
+        )
+        return
 
     missing = calculate_missing(
-        accumulated_reported
+        reported
     )
 
     await message.reply_text(
@@ -423,9 +585,18 @@ async def reset(
     if message is None:
         return
 
+    cycle_id = get_current_cycle_id()
+
+    if cycle_id is None:
+        await send_not_active_message(
+            message
+        )
+        return
+
     try:
-        save_reported(
-            set()
+        save_data(
+            cycle_id,
+            set(),
         )
 
     except Exception:
@@ -439,8 +610,8 @@ async def reset(
         return
 
     await message.reply_text(
-        "♻️ 기존 누적 보고 기록을 모두 초기화했습니다.\n"
-        "새로운 보고 집계를 시작합니다."
+        "♻️ 현재 회차의 누적 보고 기록을 초기화했습니다.\n"
+        "전체 명단에서 새로 집계를 시작합니다."
     )
 
 
@@ -461,11 +632,23 @@ async def check(
     if message is None:
         return
 
+    cycle_id, accumulated_reported = (
+        get_current_reported()
+    )
+
+    if cycle_id is None:
+        await send_not_active_message(
+            message
+        )
+        return
+
     text = message.text or ""
 
     new_reported = {
         item.strip()
-        for item in PATTERN.findall(text)
+        for item in PATTERN.findall(
+            text
+        )
     }
 
     valid_reported = (
@@ -480,8 +663,6 @@ async def check(
             "예: 선봉/3/김아린"
         )
         return
-
-    accumulated_reported = load_reported()
 
     already_reported = (
         valid_reported
@@ -502,8 +683,9 @@ async def check(
     )
 
     try:
-        save_reported(
-            updated_reported
+        save_data(
+            cycle_id,
+            updated_reported,
         )
 
     except Exception:
@@ -520,8 +702,10 @@ async def check(
         updated_reported
     )
 
-    missing_message = make_missing_message(
-        missing
+    missing_message = (
+        make_missing_message(
+            missing
+        )
     )
 
     if already_reported:
@@ -675,5 +859,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
