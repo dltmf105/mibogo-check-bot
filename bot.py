@@ -742,12 +742,32 @@ async def check(
         & MEMBERS
     )
 
-    if not valid_reported:
-        await message.reply_text(
-            "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다.\n\n"
-            "보고 문구가 아래 형식인지 확인해 주세요.\n"
-            "예: 선봉/3/김아린"
+    # 명단과 일치하지 않는 이름을 따로 찾음
+    invalid_reported = (
+        found_reported
+        - MEMBERS
+    )
+
+    # 명단과 일치하지 않는 이름이 있으면 안내
+    if invalid_reported:
+        invalid_list = sorted(
+            invalid_reported,
+            key=member_sort_key,
         )
+
+        await message.reply_text(
+            "⚠️ 양식 틀린 사람\n\n"
+            + "\n".join(invalid_list)
+        )
+
+    # 정상 보고자가 없는 경우 잘못된 명단만 알리고 종료
+    if not valid_reported:
+        if not invalid_reported:
+            await message.reply_text(
+                "⚠️ 명단에서 일치하는 보고자를 찾지 못했습니다.\n\n"
+                "보고 문구가 아래 형식인지 확인해 주세요.\n"
+                "예: 선봉/3/김아린"
+            )
         return
 
     # 현재 회차의 기존 보고자 조회
